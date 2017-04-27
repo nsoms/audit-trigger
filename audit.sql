@@ -42,6 +42,7 @@ CREATE TABLE audit.logged_actions (
     event_id bigserial primary key,
     schema_name text not null,
     table_name text not null,
+    row_id  int,
     relid oid not null,
     session_user_name text,
     action_tstamp_tx TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -112,6 +113,7 @@ BEGIN
         nextval('audit.logged_actions_event_id_seq'), -- event_id
         TG_TABLE_SCHEMA::text,                        -- schema_name
         TG_TABLE_NAME::text,                          -- table_name
+        NULL,                                         -- row_id !!!
         TG_RELID,                                     -- relation OID for much quicker searches
         session_user::text,                           -- session_user_name
         current_timestamp,                            -- action_tstamp_tx
@@ -128,16 +130,18 @@ BEGIN
         );
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
-        audit_row.client_query = NULL;
-        RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with no client_query tracking';
+        audit_row.client_query = '';
+        -- RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with no client_query tracking';
 
     END IF;
 
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
-        RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with excluded_cols: %',TG_ARGV[1];
+        -- RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with excluded_cols: %',TG_ARGV[1];
     END IF;
-    
+
+    audit_row.row_id = NEW.id;
+
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         h_old = hstore(OLD.*) - excluded_cols;
         audit_row.row_data = h_old;
@@ -146,7 +150,7 @@ BEGIN
 
         IF audit_row.changed_fields = hstore('') THEN
             -- All changed fields are ignored. Skip this update.
-            RAISE WARNING '[audit.if_modified_func] - Trigger detected NULL hstore. ending';
+            -- RAISE WARNING '[audit.if_modified_func] - Trigger detected NULL hstore. ending';
             RETURN NULL;
         END IF;
   INSERT INTO audit.logged_actions VALUES (audit_row.*);
@@ -223,6 +227,11 @@ BEGIN
     EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_table::TEXT;
     EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_table::TEXT;
 
+    -- check id column exists in audit table
+    IF (SELECT COUNT(column_name) < 1 FROM information_schema.columns WHERE table_name=target_table::TEXT AND column_name='id') THEN
+        RAISE EXCEPTION 'No column id in table % !!!', target_table::TEXT;
+        RETURN;
+    END IF;
 
     IF audit_rows THEN
         IF array_length(ignored_cols,1) > 0 THEN
