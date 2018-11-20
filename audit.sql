@@ -188,11 +188,12 @@ BEGIN
 
     ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'))
         THEN
-            audit_row.row_id = NEW.id;
             audit_row.statement_only = 't';
+            IF TG_OP IN ('INSERT', 'UPDATE') THEN
+                audit_row.row_id = NEW.id;
+            END IF;
             INSERT INTO audit.logged_actions VALUES (audit_row.*);
             RETURN NULL;
-
     ELSE
         RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %', TG_OP, TG_LEVEL;
         RETURN NEW;
